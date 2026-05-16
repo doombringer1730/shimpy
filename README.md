@@ -56,6 +56,24 @@ pip install click
 
 ---
 
+## Building on Windows or macOS
+
+shimpy's build tools are Linux-only. On Windows or macOS, use Docker Desktop:
+
+**1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)**
+
+**2. Run the build:**
+```sh
+bash docker-build.sh --board dedede --shim /path/to/dedede.bin --distro ubuntu --packages xubuntu-core
+```
+
+The output image will appear in the current directory as `shimpy-output.bin`.
+Flash it with [Chrome Recovery Utility](https://chrome.google.com/webstore/detail/chromebook-recovery-utility/pocpnlppkickgojjlmhdmidojbmbodfm) or [Rufus](https://rufus.ie) (Windows).
+
+Alternatively, trigger a build via **GitHub Actions** (Actions tab → Build shimpy image → Run workflow) — enter your board name and shim URL, and download the image from the release when it finishes.
+
+---
+
 ## Getting the shim
 
 shimpy requires a ChromeOS RMA recovery shim for your board. Shims can be

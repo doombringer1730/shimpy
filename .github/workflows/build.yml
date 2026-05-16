@@ -1,0 +1,83 @@
+name: Build shimpy image
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "Board name (e.g. dedede, drawcia)"
+        required: true
+        default: "dedede"
+      distro:
+        description: "Distro (debian or ubuntu)"
+        required: true
+        default: "ubuntu"
+      desktop:
+        description: "Desktop packages (e.g. xubuntu-core, or leave blank for CLI)"
+        required: false
+        default: "xubuntu-core"
+      rootfs_size:
+        description: "Rootfs size in MiB"
+        required: true
+        default: "6144"
+      shim_url:
+        description: "Direct URL to download the shim .bin"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            parted cgpt e2fsprogs util-linux \
+            debootstrap cpio gpgv rsync
+          pip install click
+
+      - name: Download shim
+        run: |
+          curl -L -o shim.bin "${{ github.event.inputs.shim_url }}"
+
+      - name: Build image
+        run: |
+          PACKAGES="${{ github.event.inputs.desktop }}"
+          CMD=(sudo python3 build.py build
+            --board "${{ github.event.inputs.board }}"
+            --shim shim.bin
+            --distro "${{ github.event.inputs.distro }}"
+            --rootfs-size "${{ github.event.inputs.rootfs_size }}"
+            --output "shimpy-${{ github.event.inputs.board }}.bin"
+            -v
+          )
+          if [[ -n "$PACKAGES" ]]; then
+            CMD+=(--packages "$PACKAGES")
+          fi
+          "${CMD[@]}"
+
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shimpy-${{ github.event.inputs.board }}
+          path: shimpy-${{ github.event.inputs.board }}.bin
+          retention-days: 7
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "shimpy ${{ github.event.inputs.board }} (${{ github.event.inputs.distro }})"
+          body: |
+            Board: `${{ github.event.inputs.board }}`
+            Distro: `${{ github.event.inputs.distro }}`
+            Desktop: `${{ github.event.inputs.desktop || 'none' }}`
+
+            Flash with Chrome Recovery Utility or:
+            ```
+            sudo dd if=shimpy-${{ github.event.inputs.board }}.bin of=/dev/sdX bs=4M status=progress
+            ```
+          files: shimpy-${{ github.event.inputs.board }}.bin
