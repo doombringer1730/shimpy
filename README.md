@@ -156,15 +156,51 @@ Then boot your Chromebook into recovery mode and insert the drive.
 
 ## How it works
 
-1. The ChromeOS recovery shim is copied as the base image.
-2. shimpy's chainloader script is injected into the shim's `ROOT-A` partition
-   as `/sbin/init`.
-3. A Linux rootfs (Debian or Ubuntu) is bootstrapped and written to a new
-   `SHIMPY-ROOT` partition appended to the image.
-4. On boot, depthcharge loads the shim, the shim hands off to shimpy's init,
-   which mounts `SHIMPY-ROOT` and pivots into Linux.
+shimpy works by impersonating a ChromeOS recovery image. The Chromebook's
+bootloader (depthcharge) only boots signed images — but a real ChromeOS RMA
+shim is already signed and trusted. shimpy copies that shim and quietly
+replaces one file inside it to redirect boot into Linux.
 
-ChromeOS on the main drive is untouched.
+### The deception
+
+When you put a Chromebook into recovery mode, it scans for a USB drive
+containing a valid ChromeOS recovery image. The shimpy `.bin` looks exactly
+like one — because it *is* one, with one small change.
+
+### The layers
+
+```
+shimpy-<board>.bin
+│
+├── [Partitions 1–11]  Stock ChromeOS shim (untouched)
+│   ├── KERN-A         Signed shim kernel — depthcharge boots this
+│   └── ROOT-A         Shim rootfs — shimpy replaces /sbin/init here
+│                      ↑ This is the hijack point
+│
+└── [Partition 12]     SHIMPY-ROOT (new, added by shimpy)
+                       Full Linux rootfs (Debian or Ubuntu)
+```
+
+### Boot sequence
+
+```
+Power on
+  └── depthcharge loads KERN-A (signed shim kernel) ✓ trusted
+        └── shim mounts ROOT-A
+              └── /sbin/init runs  ← shimpy's chainloader (not ChromeOS)
+                    └── finds SHIMPY-ROOT partition by label
+                          └── switch_root into Linux
+                                └── systemd / Linux boots normally
+```
+
+### Why it works
+
+- depthcharge verifies the **kernel** (KERN-A) — shimpy doesn't touch it
+- ROOT-A is not re-verified after the kernel loads — shimpy can replace anything inside it
+- The shim itself is a real, signed ChromeOS image — depthcharge trusts it completely
+- ChromeOS on the internal drive is never touched
+
+The Chromebook never knows it isn't doing a real ChromeOS recovery.
 
 ---
 
