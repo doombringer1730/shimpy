@@ -141,6 +141,11 @@ def _build(
         verbose=verbose,
     )
 
+    # --- Step 6b: Copy kernel modules and firmware from shim into rootfs ---
+    from .initramfs import parse_partition_table, find_partition, extract_partition
+    from .util import loop_device, mounted
+    _copy_shim_modules(output_path, rootfs_dir, verbose=verbose)
+
     # --- Step 7: Assemble image ---
     step("Assembling final image")
     start = extend_image(output_path, rootfs_size)
@@ -161,6 +166,67 @@ def _build(
     if not ok:
         click.echo("\nWARNING: verification found issues — see above.", err=True)
         sys.exit(1)
+
+
+def _copy_shim_modules(image: Path, rootfs: Path, verbose: bool) -> None:
+    """Copy kernel modules and firmware from the shim's ROOT-A into the rootfs.
+
+    Without this, WiFi, touchpad, audio and other hardware won't work because
+    the ChromeOS kernel modules won't be available to the Linux userspace.
+    """
+    from .initramfs import parse_partition_table, find_partition, extract_partition
+    from .util import loop_device, mounted
+    import tempfile
+
+    step("Copying kernel modules and firmware from shim")
+
+    parts = parse_partition_table(image)
+    root_a = find_partition(parts, "ROOT-A")
+
+    with tempfile.NamedTemporaryFile(suffix=".img", delete=False, prefix="shimpy-roota-mod-") as f:
+        roota_path = Path(f.name)
+
+    try:
+        extract_partition(image, root_a["start"], root_a["size"], roota_path)
+
+        with loop_device(roota_path, read_only=True) as loop:
+            with tempfile.TemporaryDirectory(prefix="shimpy-roota-mnt-") as mnt_str:
+                mnt = Path(mnt_str)
+                try:
+                    run(["mount", "-o", "ro", loop, str(mnt)])
+                except Exception:
+                    # ChromeOS ext4 features may block mounting — try with noload
+                    run(["mount", "-t", "ext4", "-o", "ro,noload", loop, str(mnt)])
+
+                try:
+                    copied = []
+                    for src_dir in ["lib/modules", "lib/firmware"]:
+                        src = mnt / src_dir
+                        dst = rootfs / src_dir
+                        if src.exists():
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            run(["rsync", "-a", "--ignore-existing",
+                                 str(src) + "/", str(dst) + "/"],
+                                verbose=verbose)
+                            copied.append(src_dir)
+                    if copied:
+                        info(f"copied: {', '.join(copied)}")
+                    else:
+                        warn("no modules or firmware found in ROOT-A")
+                finally:
+                    run(["umount", "-l", str(mnt)], check=False)
+
+        # Run depmod for each kernel version found
+        modules_dir = rootfs / "lib" / "modules"
+        if modules_dir.exists():
+            for kver in sorted(modules_dir.iterdir()):
+                if kver.is_dir():
+                    run(["depmod", "-a", "-b", str(rootfs), kver.name],
+                        verbose=verbose, check=False)
+                    info(f"ran depmod for {kver.name}")
+
+    finally:
+        roota_path.unlink(missing_ok=True)
 
 
 def _resolve_shim(board_info: dict, shim_path: Path | None) -> Path:

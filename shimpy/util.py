@@ -8,7 +8,7 @@ from pathlib import Path
 
 REQUIRED_TOOLS = [
     "parted", "cgpt", "sgdisk", "losetup", "mkfs.ext4", "debugfs", "dd", "truncate",
-    "cpio", "mount", "umount", "blkid", "file",
+    "cpio", "rsync", "depmod", "mount", "umount", "blkid", "file",
 ]
 
 OPTIONAL_TOOLS = {
