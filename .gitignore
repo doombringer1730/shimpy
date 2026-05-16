@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+shimpy-build-tmp/
+shimpy-*.bin
+shimpy-*.sha256
+build-*.log

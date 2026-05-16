@@ -1,0 +1,72 @@
+{
+  "drawcia": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook Spin 311 (R722T)",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "lantis": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook 314 (CB314-2H)",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "boten": {
+    "arch": "amd64",
+    "full_name": "Lenovo IdeaPad 3 Chromebook 14",
+    "cpu": "Intel Celeron N4020",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "blipper": {
+    "arch": "amd64",
+    "full_name": "HP Chromebook 14a",
+    "cpu": "Intel Celeron N4120",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "galtic": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook Spin 311 (CP311-3H)",
+    "cpu": "Intel Celeron N4120",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "pirika": {
+    "arch": "amd64",
+    "full_name": "Lenovo 100e Chromebook Gen 3",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "jelboz": {
+    "arch": "amd64",
+    "full_name": "HP Chromebook 11 G9 EE",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "metaknight": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook 315 (CB315-4H)",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "drawlat": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook Spin 512 (R853TA)",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  },
+  "dedede": {
+    "arch": "amd64",
+    "full_name": "Acer Chromebook Spin 512 (dedede reference board)",
+    "cpu": "Intel Celeron N4500",
+    "shim_url": null,
+    "shim_note": "RMA shims are not publicly distributed. Obtain via your device's RMA kit or a trusted source, then pass with --shim."
+  }
+}
