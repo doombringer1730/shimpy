@@ -208,6 +208,23 @@ def _configure_rootfs(target: Path, hostname: str, verbose: bool) -> None:
         else:
             warn("/sbin/init not found and systemd not present — rootfs may not boot")
 
+    # Mask systemd units that fail on ChromeOS kernels and cause boot hangs.
+    # The ChromeOS kernel does not support some standard Linux kernel features
+    # these units depend on.
+    systemd_dir = target / "etc" / "systemd" / "system"
+    systemd_dir.mkdir(parents=True, exist_ok=True)
+    mask_units = [
+        "sys-kernel-debug.mount",
+        "sys-kernel-tracing.mount",
+        "dev-hugepages.mount",
+        "dev-mqueue.mount",
+    ]
+    for unit in mask_units:
+        mask_path = systemd_dir / unit
+        if not mask_path.exists():
+            mask_path.symlink_to("/dev/null")
+    info(f"masked {len(mask_units)} systemd units for ChromeOS kernel compatibility")
+
     info("rootfs configuration complete")
 
 
