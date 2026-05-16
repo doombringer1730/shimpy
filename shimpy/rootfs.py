@@ -148,20 +148,28 @@ def _apt_install(target: Path, packages: list[str], verbose: bool) -> None:
     ]
     chroot = ["chroot", str(target)]
 
-    # ubuntu-base needs /dev, /proc, /sys, and resolv.conf from the host
+    # ubuntu-base needs /dev, /dev/pts, /proc, /sys, and resolv.conf from the host
     mounts = [
-        (Path("/dev"),           target / "dev",            "bind"),
-        (Path("/proc"),          target / "proc",           "bind"),
-        (Path("/sys"),           target / "sys",            "bind"),
-        (Path("/etc/resolv.conf"), target / "etc/resolv.conf", "bind"),
+        (Path("/dev"),             target / "dev"),
+        (Path("/dev/pts"),         target / "dev/pts"),
+        (Path("/proc"),            target / "proc"),
+        (Path("/sys"),             target / "sys"),
+        (Path("/etc/resolv.conf"), target / "etc/resolv.conf"),
     ]
-    for src, dst, _ in mounts:
+    for src, dst in mounts:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if not dst.exists():
             dst.touch() if src.is_file() else dst.mkdir(parents=True, exist_ok=True)
         run(["mount", "--bind", str(src), str(dst)])
 
     try:
+        # Remove broken dpkg statoverride entries that reference missing groups
+        statoverride = target / "var/lib/dpkg/statoverride"
+        if statoverride.exists():
+            lines = statoverride.read_text().splitlines()
+            cleaned = [l for l in lines if "messagebus" not in l]
+            statoverride.write_text("\n".join(cleaned) + "\n")
+
         # Install gpgv first so apt can verify signatures
         run(env_prefix + chroot + [
             "apt-get", "install", "-y", "--no-install-recommends", "gpgv",
@@ -174,7 +182,7 @@ def _apt_install(target: Path, packages: list[str], verbose: bool) -> None:
             verbose=verbose,
         )
     finally:
-        for _, dst, _ in reversed(mounts):
+        for _, dst in reversed(mounts):
             run(["umount", "-l", str(dst)], check=False)
 
 
