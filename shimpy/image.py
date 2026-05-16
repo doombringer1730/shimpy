@@ -47,8 +47,8 @@ def extend_image(path: Path, rootfs_size_mib: int) -> int:
     info(f"extended image: {current // MiB} MiB -> {new_size // MiB} MiB")
 
     # After extending, the backup GPT header is at the old end of file.
-    # Repair moves it to the correct location before parted adds a partition.
-    run(["cgpt", "repair", str(path)])
+    # sgdisk -e moves it to the correct location before parted adds a partition.
+    run(["sgdisk", "-e", str(path)])
     info("GPT backup header relocated to end of extended image")
 
     return start

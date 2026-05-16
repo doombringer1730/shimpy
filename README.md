@@ -33,7 +33,7 @@ Don't see your board? If it's in the dedede family, open an issue or add it to
 
 **System tools:**
 ```sh
-sudo apt-get install parted cgpt e2fsprogs util-linux debootstrap cpio gpgv
+sudo apt-get install parted cgpt gdisk e2fsprogs util-linux debootstrap cpio gpgv
 ```
 
 | Tool | Purpose |
@@ -68,7 +68,7 @@ cd shimpy
 ### 2. Install dependencies
 
 ```sh
-sudo apt-get install parted cgpt e2fsprogs util-linux debootstrap cpio gpgv
+sudo apt-get install parted cgpt gdisk e2fsprogs util-linux debootstrap cpio gpgv
 pip install click
 ```
 

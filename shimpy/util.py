@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 REQUIRED_TOOLS = [
-    "parted", "cgpt", "losetup", "mkfs.ext4", "debugfs", "dd", "truncate",
+    "parted", "cgpt", "sgdisk", "losetup", "mkfs.ext4", "debugfs", "dd", "truncate",
     "cpio", "mount", "umount", "blkid", "file",
 ]
 

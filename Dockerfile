@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     parted \
     cgpt \
+    gdisk \
     e2fsprogs \
     util-linux \
     debootstrap \
