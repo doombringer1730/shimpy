@@ -56,6 +56,77 @@ pip install click
 
 ---
 
+## Quick Start (Linux)
+
+### 1. Clone the repo
+
+```sh
+git clone https://github.com/doombringer1730/shimpy.git
+cd shimpy
+```
+
+### 2. Install dependencies
+
+```sh
+sudo apt-get install parted cgpt e2fsprogs util-linux debootstrap cpio gpgv
+pip install click
+```
+
+### 3. Get your shim
+
+Download your board's RMA shim from [cros.downloads](https://cros.downloads).
+Search for your board name (e.g. `dedede`) and download the `.bin` file.
+
+Place it anywhere accessible, for example:
+```sh
+~/Downloads/dedede.bin
+```
+
+### 4. Run the installer
+
+```sh
+sudo bash setup.sh
+```
+
+The script will ask you:
+- Your board name (e.g. `dedede`) — run `python3 build.py list-boards` if unsure
+- Path to your shim `.bin`
+- Which distro and desktop you want
+- Any extra packages
+- Where to save the output image
+
+It will then build the image automatically. The first build takes **20-40 minutes** depending on your internet speed and whether you have an SSD or HDD. Subsequent builds for the same board reuse the cached rootfs and are much faster.
+
+### 5. Flash the image
+
+```sh
+sudo dd if=shimpy-<board>.bin of=/dev/sdX bs=4M status=progress
+```
+
+Replace `/dev/sdX` with your USB drive. Then boot your Chromebook into recovery mode and insert the drive.
+
+---
+
+## Building via GitHub Actions (Windows / macOS / no Linux)
+
+If you don't have a Linux machine, you can trigger a build in the cloud:
+
+1. **Fork this repo** on GitHub
+2. Go to **Actions → Build shimpy image → Run workflow**
+3. Fill in:
+   - Board name (e.g. `dedede`)
+   - Distro (`ubuntu` or `debian`)
+   - Desktop packages (e.g. `xubuntu-core`, or leave blank for CLI)
+   - Rootfs size in MiB (e.g. `6144`)
+   - A direct download URL to your shim `.bin`
+4. Click **Run workflow**
+
+The build takes **20-30 minutes** on GitHub's servers. When it finishes, a release is automatically created with the image attached — download it and flash with [Chrome Recovery Utility](https://chrome.google.com/webstore/detail/chromebook-recovery-utility/pocpnlppkickgojjlmhdmidojbmbodfm) or [Rufus](https://rufus.ie) (Windows).
+
+> **Note:** GitHub Actions artifacts are kept for 7 days. Download your image before then.
+
+---
+
 ## Building on Windows or macOS
 
 shimpy's build tools are Linux-only. On Windows or macOS, use Docker Desktop:
