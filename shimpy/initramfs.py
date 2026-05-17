@@ -178,6 +178,25 @@ def _inject_into_squashfs(partition_path: Path, verbose: bool) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def detect_fs_type(path: Path) -> str:
+    """Detect filesystem type of a partition image. Returns 'ext4' or 'squashfs'."""
+    magic = run_output(["file", "-b", str(path)])
+    if "squashfs" in magic.lower():
+        return "squashfs"
+    if "ext" in magic.lower():
+        return "ext4"
+    blkid_out = run_output(["blkid", "-o", "value", "-s", "TYPE", str(path)], check=False)
+    if "squashfs" in blkid_out.lower():
+        return "squashfs"
+    if "ext" in blkid_out.lower():
+        return "ext4"
+    raise BuildError(
+        f"Could not detect filesystem type of {path}\n"
+        f"file output: {magic}\n"
+        "Expected ext4 or squashfs."
+    )
+
+
 def patch_shim(image: Path, verbose: bool = False) -> None:
     step("Parsing shim partition table")
     parts = parse_partition_table(image)
@@ -193,11 +212,7 @@ def patch_shim(image: Path, verbose: bool = False) -> None:
     try:
         extract_partition(image, root_a["start"], root_a["size"], roota_path)
 
-        fs_type = run_output(["file", "-b", str(roota_path)])
-        if "squashfs" in fs_type.lower():
-            fs = "squashfs"
-        else:
-            fs = "ext4"
+        fs = detect_fs_type(roota_path)
         info(f"ROOT-A filesystem: {fs}")
 
         step("Injecting shimpy chainloader into ROOT-A")

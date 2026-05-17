@@ -13,12 +13,19 @@ from .image import (
     copy_shim,
     extend_image,
     format_and_populate,
+    format_and_populate_squashfs,
     verify_image,
     write_checksum,
 )
-from .initramfs import patch_shim
-from .rootfs import build_rootfs
-from .util import BuildError, check_root, check_tools, step, info, warn
+from .initramfs import patch_shim, parse_partition_table, find_partition, extract_partition
+from .rootfs import (
+    bootstrap_rootfs,
+    bootstrap_cache_key,
+    configure_rootfs,
+    default_release,
+    build_rootfs,
+)
+from .util import BuildError, check_root, check_tools, loop_device, run, step, info, warn
 
 BUILD_TMP = Path("shimpy-build-tmp")
 
@@ -33,39 +40,91 @@ def cli() -> None:
 # build
 # ---------------------------------------------------------------------------
 
+PRESETS: dict[str, dict] = {
+    "minimal":  {"distro": "debian",  "packages": "",                       "rootfs_size": 4096},
+    "xubuntu":  {"distro": "ubuntu",  "packages": "xubuntu-core",           "rootfs_size": 6144},
+    "gnome":    {"distro": "ubuntu",  "packages": "ubuntu-desktop-minimal",  "rootfs_size": 8192},
+    "kde":      {"distro": "ubuntu",  "packages": "kubuntu-desktop",         "rootfs_size": 10240},
+    "kali":     {"distro": "kali",    "packages": "kali-desktop-xfce",       "rootfs_size": 8192},
+    "alpine":   {"distro": "alpine",  "packages": "",                        "rootfs_size": 2048},
+    "arch":     {"distro": "arch",    "packages": "",                        "rootfs_size": 8192},
+}
+
+
 @cli.command()
 @click.option("--board", required=True, help="Dedede sub-board name (e.g. drawcia, lantis)")
-@click.option("--distro", default="debian", show_default=True,
-              type=click.Choice(["debian", "ubuntu"]), help="Base Linux distro")
-@click.option("--release", default=None,
-              help="Distro release codename (e.g. bookworm, noble). Defaults per distro.")
 @click.option("--shim", "shim_path", default=None, type=click.Path(exists=True, path_type=Path),
               help="Path to local RMA shim .bin. Required unless the board has a shim_url.")
-@click.option("--output", "output_path", default=None, type=click.Path(path_type=Path),
-              help="Output image path (default: shimpy-<board>.bin)")
-@click.option("--rootfs-size", default=4096, show_default=True,
-              help="Linux rootfs partition size in MiB")
+@click.option("--preset", default=None, type=click.Choice(list(PRESETS)),
+              help="Desktop preset: minimal, xubuntu, gnome, kde, kali, alpine, arch.")
+@click.option("--distro", default="debian", show_default=True,
+              type=click.Choice(["debian", "ubuntu", "kali", "alpine", "arch"]),
+              help="Base Linux distro (overridden by --preset)")
+@click.option("--release", default=None,
+              help="Distro release codename (e.g. bookworm, noble). Defaults per distro.")
 @click.option("--packages", default="", help="Comma-separated extra packages to install")
+@click.option("--rootfs-size", default=None, type=int,
+              help="Linux rootfs partition size in MiB (default: 4096, or preset value)")
+@click.option("--output", "output_path", default=None, type=click.Path(path_type=Path),
+              help="Output image path (default: shimpy-<board>[-<preset>].bin)")
+@click.option("--recovery", "recovery_path", default=None, type=click.Path(exists=True, path_type=Path),
+              help="ChromeOS recovery image for additional firmware (improves WiFi/audio support)")
+@click.option("--username", default="shimpy", show_default=True,
+              help="Username for the default user account created in the rootfs")
+@click.option("--password", default="shimpy", show_default=True,
+              help="Password for the default user account (change after first boot)")
 @click.option("--arch", default="amd64", show_default=True,
               type=click.Choice(["amd64", "arm64"]), help="Target CPU architecture")
+@click.option("--no-cache", is_flag=True, default=False,
+              help="Ignore cached rootfs and run a fresh bootstrap (slower).")
+@click.option("--squashfs", is_flag=True, default=False,
+              help="Compress rootfs as squashfs (smaller image) with a separate writable overlay partition.")
+@click.option("--write-size", default=2048, show_default=True,
+              help="Writable overlay partition size in MiB (squashfs mode only)")
 @click.option("-v", "--verbose", is_flag=True, help="Show build step output")
 @click.option("--dry-run", is_flag=True, help="Print steps without executing")
 def build(
     board: str,
+    shim_path: Path | None,
+    preset: str | None,
     distro: str,
     release: str | None,
-    shim_path: Path | None,
-    output_path: Path | None,
-    rootfs_size: int,
     packages: str,
+    rootfs_size: int | None,
+    output_path: Path | None,
+    recovery_path: Path | None,
+    username: str,
+    password: str,
     arch: str,
+    no_cache: bool,
+    squashfs: bool,
+    write_size: int,
     verbose: bool,
     dry_run: bool,
 ) -> None:
-    """Build a flashable shimpy image for BOARD."""
+    """Build a flashable shimpy image for BOARD.
+
+    Quick start with a preset:
+
+      sudo python3 build.py build --board dedede --shim shim.bin --preset xubuntu
+
+    Available presets: minimal, xubuntu, gnome, kde.
+    """
+    if preset:
+        p = PRESETS[preset]
+        distro = p["distro"]
+        if not packages:
+            packages = p["packages"]
+        if rootfs_size is None:
+            rootfs_size = p["rootfs_size"]
+        if output_path is None:
+            output_path = Path(f"shimpy-{board}-{preset}.bin")
+    if rootfs_size is None:
+        rootfs_size = 4096
     try:
         _build(board, distro, release, shim_path, output_path,
-               rootfs_size, packages, arch, verbose, dry_run)
+               rootfs_size, packages, arch, recovery_path, username, password,
+               no_cache, squashfs, write_size, verbose, dry_run)  # type: ignore[arg-type]
     except BuildError as e:
         click.echo(f"\nError: {e}", err=True)
         sys.exit(1)
@@ -83,6 +142,12 @@ def _build(
     rootfs_size: int,
     packages: str,
     arch: str,
+    recovery_path: Path | None,
+    username: str,
+    password: str,
+    no_cache: bool,
+    squashfs: bool,
+    write_size: int,
     verbose: bool,
     dry_run: bool,
 ) -> None:
@@ -105,10 +170,13 @@ def _build(
         click.echo("[dry-run] would build:")
         click.echo(f"  board:        {board}")
         click.echo(f"  shim:         {resolved_shim or '(none — pass --shim)'}")
+        click.echo(f"  recovery:     {recovery_path or '(none — pass --recovery for better WiFi/audio firmware)'}")
         click.echo(f"  distro:       {distro} {release or '(default)'}")
         click.echo(f"  arch:         {arch}")
         click.echo(f"  rootfs_size:  {rootfs_size} MiB")
+        click.echo(f"  squashfs:     {squashfs}" + (f" (write overlay: {write_size} MiB)" if squashfs else ""))
         click.echo(f"  output:       {output_path}")
+        click.echo(f"  username:     {username}")
         if extra_packages:
             click.echo(f"  packages:     {', '.join(extra_packages)}")
         return
@@ -129,28 +197,61 @@ def _build(
     # --- Step 4 & 5: Patch ROOT-A with shimpy chainloader ---
     patch_shim(output_path, verbose=verbose)
 
-    # --- Step 6: Build Linux rootfs ---
+    # --- Step 6: Build Linux rootfs (bootstrap from cache if available) ---
+    import hashlib as _hashlib
+    resolved_release = release or default_release(distro, arch)
+    cache_key = bootstrap_cache_key(distro, resolved_release, arch, extra_packages)
+    cache_dir  = BUILD_TMP / f"cache-{cache_key}"
+    cache_mark = cache_dir / ".shimpy-bootstrap-complete"
     rootfs_dir = BUILD_TMP / f"rootfs-{board}"
-    build_rootfs(
+
+    if not no_cache and cache_dir.exists() and cache_mark.exists():
+        step(f"Restoring rootfs from cache [{cache_key}]")
+        info(f"cache: {cache_dir}  (use --no-cache to rebuild from scratch)")
+        rootfs_dir.mkdir(parents=True, exist_ok=True)
+        run(["rsync", "-a", "--delete",
+             str(cache_dir) + "/", str(rootfs_dir) + "/"],
+            verbose=verbose)
+    else:
+        if no_cache and cache_dir.exists():
+            info("--no-cache: ignoring existing cached bootstrap")
+        rootfs_dir.mkdir(parents=True, exist_ok=True)
+        bootstrap_rootfs(
+            target=rootfs_dir,
+            distro=distro,
+            release=resolved_release,
+            arch=arch,
+            extra_packages=extra_packages,
+            verbose=verbose,
+        )
+        if not no_cache:
+            step(f"Saving bootstrap to cache [{cache_key}]")
+            run(["rsync", "-a", str(rootfs_dir) + "/", str(cache_dir) + "/"],
+                verbose=verbose)
+            cache_mark.touch()
+            info(f"cached: {cache_dir}")
+
+    configure_rootfs(
         target=rootfs_dir,
-        distro=distro,
-        release=release,
-        arch=arch,
-        extra_packages=extra_packages,
         hostname=f"shimpy-{board}",
+        username=username,
+        password=password,
+        distro=distro,
+        squashfs=squashfs,
         verbose=verbose,
     )
 
-    # --- Step 6b: Copy kernel modules and firmware from shim into rootfs ---
-    from .initramfs import parse_partition_table, find_partition, extract_partition
-    from .util import loop_device, mounted
-    _copy_shim_modules(output_path, rootfs_dir, verbose=verbose)
+    # --- Step 6b: Copy kernel modules and firmware from shim (and recovery) into rootfs ---
+    _copy_shim_modules(output_path, rootfs_dir, recovery_path=recovery_path, verbose=verbose)
 
     # --- Step 7: Assemble image ---
     step("Assembling final image")
-    start = extend_image(output_path, rootfs_size)
-    add_gpt_partition(output_path, start, "SHIMPY-ROOT")
-    format_and_populate(output_path, rootfs_dir, verbose=verbose)
+    if squashfs:
+        format_and_populate_squashfs(output_path, rootfs_dir, write_size, verbose=verbose)
+    else:
+        start = extend_image(output_path, rootfs_size)
+        add_gpt_partition(output_path, start, "SHIMPY-ROOT")
+        format_and_populate(output_path, rootfs_dir, verbose=verbose)
 
     # --- Step 8: Verify ---
     ok = verify_image(output_path, verbose=verbose)
@@ -168,14 +269,18 @@ def _build(
         sys.exit(1)
 
 
-def _copy_shim_modules(image: Path, rootfs: Path, verbose: bool) -> None:
+def _copy_shim_modules(
+    image: Path,
+    rootfs: Path,
+    *,
+    recovery_path: Path | None = None,
+    verbose: bool = False,
+) -> None:
     """Copy kernel modules and firmware from the shim's ROOT-A into the rootfs.
 
     Without this, WiFi, touchpad, audio and other hardware won't work because
     the ChromeOS kernel modules won't be available to the Linux userspace.
     """
-    from .initramfs import parse_partition_table, find_partition, extract_partition
-    from .util import loop_device, mounted
     import tempfile
 
     step("Copying kernel modules and firmware from shim")
@@ -210,9 +315,9 @@ def _copy_shim_modules(image: Path, rootfs: Path, verbose: bool) -> None:
                                 verbose=verbose)
                             copied.append(src_dir)
                     if copied:
-                        info(f"copied: {', '.join(copied)}")
+                        info(f"copied from shim: {', '.join(copied)}")
                     else:
-                        warn("no modules or firmware found in ROOT-A")
+                        warn("no modules or firmware found in shim ROOT-A")
                 finally:
                     run(["umount", "-l", str(mnt)], check=False)
 
@@ -227,6 +332,64 @@ def _copy_shim_modules(image: Path, rootfs: Path, verbose: bool) -> None:
 
     finally:
         roota_path.unlink(missing_ok=True)
+
+    if recovery_path is not None:
+        _copy_recovery_firmware(recovery_path, rootfs, verbose=verbose)
+
+
+def _copy_recovery_firmware(recovery_path: Path, rootfs: Path, *, verbose: bool = False) -> None:
+    """Copy additional firmware from a ChromeOS recovery image into the rootfs.
+
+    Recovery images carry firmware blobs (WiFi, audio, touchpad) that are often
+    absent from the smaller RMA shim. Copying them on top of the shim firmware
+    significantly improves hardware support on first boot.
+    """
+    import tempfile
+
+    step("Copying firmware from recovery image")
+
+    try:
+        parts = parse_partition_table(recovery_path)
+        root_a = find_partition(parts, "ROOT-A")
+    except Exception as e:
+        warn(f"Could not parse recovery image: {e} — skipping recovery firmware")
+        return
+
+    with tempfile.NamedTemporaryFile(suffix=".img", delete=False, prefix="shimpy-reco-") as f:
+        reco_img = Path(f.name)
+
+    try:
+        extract_partition(recovery_path, root_a["start"], root_a["size"], reco_img)
+
+        with loop_device(reco_img, read_only=True) as loop:
+            with tempfile.TemporaryDirectory(prefix="shimpy-reco-mnt-") as mnt_str:
+                mnt = Path(mnt_str)
+                try:
+                    run(["mount", "-o", "ro", loop, str(mnt)])
+                except Exception:
+                    run(["mount", "-t", "ext4", "-o", "ro,noload", loop, str(mnt)])
+
+                try:
+                    copied = []
+                    for src_dir in ["lib/firmware", "lib/modprobe.d"]:
+                        src = mnt / src_dir
+                        dst = rootfs / src_dir
+                        if src.exists():
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            run(["rsync", "-a", "--ignore-existing",
+                                 str(src) + "/", str(dst) + "/"],
+                                verbose=verbose)
+                            copied.append(src_dir)
+                    if copied:
+                        info(f"copied from recovery: {', '.join(copied)}")
+                    else:
+                        warn("no firmware found in recovery ROOT-A")
+                finally:
+                    run(["umount", "-l", str(mnt)], check=False)
+    except Exception as e:
+        warn(f"Recovery firmware copy failed: {e}")
+    finally:
+        reco_img.unlink(missing_ok=True)
 
 
 def _resolve_shim(board_info: dict, shim_path: Path | None) -> Path:
@@ -311,12 +474,31 @@ def verify(image: Path, verbose: bool) -> None:
 
 @cli.command()
 @click.option("--yes", is_flag=True, help="Skip confirmation prompt")
-def clean(yes: bool) -> None:
-    """Remove the build cache directory (shimpy-build-tmp/)."""
+@click.option("--cache-only", is_flag=True, help="Only remove cached rootfs snapshots, keep built rootfs dirs")
+def clean(yes: bool, cache_only: bool) -> None:
+    """Remove the build cache directory (shimpy-build-tmp/).
+
+    Use --cache-only to only purge rootfs bootstrap caches (cache-* dirs)
+    without removing in-progress build state.
+    """
     if not BUILD_TMP.exists():
         click.echo("Nothing to clean.")
         return
-    if not yes:
-        click.confirm(f"Remove {BUILD_TMP}?", abort=True)
-    shutil.rmtree(BUILD_TMP)
-    click.echo(f"Removed {BUILD_TMP}")
+
+    if cache_only:
+        caches = list(BUILD_TMP.glob("cache-*"))
+        if not caches:
+            click.echo("No cached rootfs snapshots found.")
+            return
+        total = sum(sum(f.stat().st_size for f in c.rglob("*") if f.is_file())
+                    for c in caches) // (1024 * 1024)
+        if not yes:
+            click.confirm(f"Remove {len(caches)} cached bootstrap(s) (~{total} MiB)?", abort=True)
+        for c in caches:
+            shutil.rmtree(c)
+        click.echo(f"Removed {len(caches)} cached bootstrap(s).")
+    else:
+        if not yes:
+            click.confirm(f"Remove {BUILD_TMP}?", abort=True)
+        shutil.rmtree(BUILD_TMP)
+        click.echo(f"Removed {BUILD_TMP}")

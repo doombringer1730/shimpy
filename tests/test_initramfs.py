@@ -8,18 +8,19 @@ from shimpy.util import BuildError
 
 
 class TestParsePartitionTable(unittest.TestCase):
-    PARTED_OUTPUT = (
-        "BYT;\n"
-        "/dev/sda:1073741824B:file:512:512:gpt:Shim Image:;\n"
-        "1:17408B:1048575B:1031168B::STATE:;\n"
-        "2:1048576B:5242879B:4194304B::KERN-A:;\n"
-        "3:5242880B:273678335B:268435456B::ROOT-A:;\n"
-        "4:273678336B:277872639B:4194304B::KERN-B:;\n"
+    # cgpt show output: start_lba, size_lba, part_num, Label: "name"
+    # ROOT-A: start=10240*512=5242880, size=524288*512=268435456
+    CGPT_OUTPUT = (
+        "       start        size    part  contents\n"
+        "          34        2014       1  Label: \"STATE\"\n"
+        "        2048        8192       2  Label: \"KERN-A\"\n"
+        "       10240      524288       3  Label: \"ROOT-A\"\n"
+        "      534528        8192       4  Label: \"KERN-B\"\n"
     )
 
     @patch("shimpy.initramfs.run_output")
     def test_parses_all_partitions(self, mock_run):
-        mock_run.return_value = self.PARTED_OUTPUT
+        mock_run.return_value = self.CGPT_OUTPUT
         parts = parse_partition_table(Path("fake.bin"))
         self.assertIn("ROOT-A", parts)
         self.assertIn("KERN-A", parts)
@@ -27,7 +28,7 @@ class TestParsePartitionTable(unittest.TestCase):
 
     @patch("shimpy.initramfs.run_output")
     def test_partition_fields(self, mock_run):
-        mock_run.return_value = self.PARTED_OUTPUT
+        mock_run.return_value = self.CGPT_OUTPUT
         parts = parse_partition_table(Path("fake.bin"))
         root_a = parts["ROOT-A"]
         self.assertEqual(root_a["num"], 3)
@@ -36,7 +37,7 @@ class TestParsePartitionTable(unittest.TestCase):
 
     @patch("shimpy.initramfs.run_output")
     def test_raises_for_missing_partition(self, mock_run):
-        mock_run.return_value = self.PARTED_OUTPUT
+        mock_run.return_value = self.CGPT_OUTPUT
         parts = parse_partition_table(Path("fake.bin"))
         from shimpy.initramfs import find_partition
         with self.assertRaises(BuildError):

@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
-from shimpy.rootfs import _default_release, _debootstrap_tool, build_rootfs
+from shimpy.rootfs import default_release as _default_release, _debootstrap_tool, build_rootfs
 from shimpy.util import BuildError
 
 
@@ -15,7 +15,7 @@ class TestDefaultRelease(unittest.TestCase):
 
     def test_unknown_distro(self):
         with self.assertRaises(BuildError):
-            _default_release("arch", "amd64")
+            _default_release("gentoo", "amd64")
 
 
 class TestDebootstrapTool(unittest.TestCase):
@@ -34,7 +34,7 @@ class TestDebootstrapTool(unittest.TestCase):
 
 
 class TestBuildRootfs(unittest.TestCase):
-    @patch("shimpy.rootfs._configure_rootfs")
+    @patch("shimpy.rootfs.configure_rootfs")
     @patch("shimpy.rootfs._bootstrap_debian")
     def test_debian_calls_debootstrap(self, mock_bootstrap, mock_configure):
         import tempfile
@@ -46,6 +46,8 @@ class TestBuildRootfs(unittest.TestCase):
                 arch="amd64",
                 extra_packages=["vim"],
                 hostname="shimpy-test",
+                username="shimpy",
+                password="shimpy",
                 verbose=False,
             )
         mock_bootstrap.assert_called_once()
@@ -54,7 +56,7 @@ class TestBuildRootfs(unittest.TestCase):
         self.assertEqual(args[0][2], "amd64")
         self.assertIn("vim", args[0][3])
 
-    @patch("shimpy.rootfs._configure_rootfs")
+    @patch("shimpy.rootfs.configure_rootfs")
     @patch("shimpy.rootfs._bootstrap_ubuntu")
     def test_ubuntu_calls_ubuntu_bootstrap(self, mock_bootstrap, mock_configure):
         import tempfile
@@ -66,11 +68,13 @@ class TestBuildRootfs(unittest.TestCase):
                 arch="amd64",
                 extra_packages=[],
                 hostname="shimpy-test",
+                username="shimpy",
+                password="shimpy",
                 verbose=False,
             )
         mock_bootstrap.assert_called_once()
 
-    @patch("shimpy.rootfs._configure_rootfs")
+    @patch("shimpy.rootfs.configure_rootfs")
     @patch("shimpy.rootfs._bootstrap_debian")
     def test_uses_default_release_when_none(self, mock_bootstrap, mock_configure):
         import tempfile
@@ -82,6 +86,8 @@ class TestBuildRootfs(unittest.TestCase):
                 arch="amd64",
                 extra_packages=[],
                 hostname="shimpy-test",
+                username="shimpy",
+                password="shimpy",
                 verbose=False,
             )
         args = mock_bootstrap.call_args
@@ -98,6 +104,8 @@ class TestBuildRootfs(unittest.TestCase):
                     arch="amd64",
                     extra_packages=[],
                     hostname="shimpy-test",
+                    username="shimpy",
+                    password="shimpy",
                     verbose=False,
                 )
 

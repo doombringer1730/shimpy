@@ -7,6 +7,7 @@ output .bin together with a SHA-256 checksum file.
 """
 
 import hashlib
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -113,6 +114,62 @@ def format_and_populate(image: Path, rootfs_dir: Path, verbose: bool) -> None:
                 info(f"rootfs copied to partition {part_num}")
 
 
+def format_and_populate_squashfs(
+    image: Path, rootfs_dir: Path, write_size_mib: int, verbose: bool
+) -> None:
+    """Build a squashfs rootfs + writable overlay partition.
+
+    Creates two new GPT partitions:
+      SHIMPY-SQS   — zstd-compressed squashfs (read-only base)
+      SHIMPY-WRITE — ext4 (writable overlayfs upper layer, persistent)
+
+    shimpy-init.sh detects SHIMPY-SQS and mounts them together via overlayfs.
+    """
+    if not shutil.which("mksquashfs"):
+        raise BuildError(
+            "mksquashfs is required for --squashfs mode.\n"
+            "Install with: sudo apt-get install squashfs-tools"
+        )
+
+    step("Creating squashfs rootfs (zstd compression)")
+    squashfs_tmp = Path(tempfile.mktemp(suffix=".squashfs", prefix="shimpy-rootfs-"))
+    try:
+        n_proc = str(os.cpu_count() or 1)
+        run([
+            "mksquashfs", str(rootfs_dir), str(squashfs_tmp),
+            "-comp", "zstd", "-b", "1M", "-noappend",
+            "-processors", n_proc,
+            "-no-progress",
+        ], verbose=verbose)
+        info(f"mksquashfs used {n_proc} processor(s)")
+
+        sqs_bytes = squashfs_tmp.stat().st_size
+        sqs_mib = (sqs_bytes + MiB - 1) // MiB + 2  # 2 MiB buffer
+        info(f"squashfs: {sqs_bytes // MiB} MiB compressed (partition: {sqs_mib} MiB)")
+
+        sqs_start = extend_image(image, sqs_mib)
+        add_gpt_partition(image, sqs_start, "SHIMPY-SQS")
+
+        sqs_part_num = _find_partition_num(image, "SHIMPY-SQS")
+        with loop_device(image, partscan=True) as loop:
+            part_dev = f"{loop}p{sqs_part_num}"
+            run(["dd", f"if={squashfs_tmp}", f"of={part_dev}",
+                 "bs=4M", "conv=notrunc", "status=none"])
+        info(f"squashfs written to SHIMPY-SQS (partition {sqs_part_num})")
+    finally:
+        squashfs_tmp.unlink(missing_ok=True)
+
+    step(f"Creating writable overlay partition ({write_size_mib} MiB)")
+    write_start = extend_image(image, write_size_mib)
+    add_gpt_partition(image, write_start, "SHIMPY-WRITE")
+
+    write_part_num = _find_partition_num(image, "SHIMPY-WRITE")
+    with loop_device(image, partscan=True) as loop:
+        part_dev = f"{loop}p{write_part_num}"
+        run(["mkfs.ext4", "-L", "SHIMPY-WRITE", "-F", part_dev], verbose=verbose)
+    info(f"SHIMPY-WRITE formatted as ext4 (partition {write_part_num})")
+
+
 def write_checksum(image: Path) -> Path:
     step("Writing checksum")
     h = hashlib.sha256()
@@ -153,14 +210,45 @@ def verify_image(image: Path, verbose: bool = False) -> bool:
     else:
         info("ROOT-A: present")
 
-    if "SHIMPY-ROOT" not in labels:
-        issues.append("SHIMPY-ROOT partition not found")
-        ok = False
-    else:
-        info("SHIMPY-ROOT: present")
+    squashfs_mode = "SHIMPY-SQS" in labels
 
-    # 2. Check SHIMPY-ROOT has /sbin/init
-    if "SHIMPY-ROOT" in labels:
+    if squashfs_mode:
+        info("SHIMPY-SQS: present (squashfs mode)")
+        if "SHIMPY-WRITE" not in labels:
+            issues.append("SHIMPY-WRITE partition not found (required for squashfs overlay)")
+            ok = False
+        else:
+            info("SHIMPY-WRITE: present")
+    else:
+        if "SHIMPY-ROOT" not in labels:
+            issues.append("SHIMPY-ROOT partition not found")
+            ok = False
+        else:
+            info("SHIMPY-ROOT: present")
+
+    # 2. Check rootfs has /sbin/init
+    if squashfs_mode and "SHIMPY-SQS" in labels:
+        try:
+            part_num = _find_partition_num(image, "SHIMPY-SQS")
+            with loop_device(image, partscan=True) as loop:
+                part_dev = f"{loop}p{part_num}"
+                with tempfile.TemporaryDirectory(prefix="shimpy-verify-sqs-") as mnt_str:
+                    mnt = Path(mnt_str)
+                    mnt.mkdir(parents=True, exist_ok=True)
+                    run(["mount", "-t", "squashfs", "-o", "ro", part_dev, str(mnt)])
+                    try:
+                        init = mnt / "sbin" / "init"
+                        if not init.exists():
+                            issues.append("SHIMPY-SQS missing /sbin/init")
+                            ok = False
+                        else:
+                            info("SHIMPY-SQS /sbin/init: present")
+                    finally:
+                        run(["umount", "-l", str(mnt)], check=False)
+        except Exception as e:
+            issues.append(f"Could not inspect SHIMPY-SQS: {e}")
+            ok = False
+    elif not squashfs_mode and "SHIMPY-ROOT" in labels:
         try:
             part_num = _find_partition_num(image, "SHIMPY-ROOT")
             with loop_device(image, partscan=True) as loop:
@@ -186,7 +274,13 @@ def verify_image(image: Path, verbose: bool = False) -> bool:
                 part_dev = f"{loop}p{part_num}"
                 with tempfile.TemporaryDirectory(prefix="shimpy-verify-roota-") as mnt_str:
                     mnt = Path(mnt_str)
-                    with mounted(part_dev, mnt, options="ro"):
+                    mnt.mkdir(parents=True, exist_ok=True)
+                    # ChromeOS ROOT-A has vendor ro_compat ext4 bits; fall back to noload
+                    try:
+                        run(["mount", "-o", "ro", part_dev, str(mnt)])
+                    except Exception:
+                        run(["mount", "-t", "ext4", "-o", "ro,noload", part_dev, str(mnt)])
+                    try:
                         init = mnt / "sbin" / "init"
                         if not init.exists():
                             issues.append("ROOT-A missing /sbin/init (shimpy chainloader)")
@@ -196,6 +290,8 @@ def verify_image(image: Path, verbose: bool = False) -> bool:
                             ok = False
                         else:
                             info("ROOT-A /sbin/init: shimpy chainloader present")
+                    finally:
+                        run(["umount", "-l", str(mnt)], check=False)
         except Exception as e:
             issues.append(f"Could not inspect ROOT-A: {e}")
             ok = False

@@ -65,23 +65,23 @@ class TestWriteChecksum(unittest.TestCase):
 
 
 class TestFindPartitionNum(unittest.TestCase):
-    PARTED_OUTPUT = (
-        "BYT;\n"
-        "/dev/loop0:8388608B:loopback:512:512:gpt:Loopback device:;\n"
-        "1:1048576B:2097151B:1048576B::STATE:;\n"
-        "2:2097152B:3145727B:1048576B::ROOT-A:;\n"
-        "3:3145728B:4194303B:1048576B::SHIMPY-ROOT:;\n"
+    # cgpt show output format (shimpy uses cgpt, not parted, for partition lookup)
+    CGPT_OUTPUT = (
+        "       start        size    part  contents\n"
+        "        8192        2048       1  Label: \"STATE\"\n"
+        "       10240        4096       2  Label: \"ROOT-A\"\n"
+        "       14336        8192       3  Label: \"SHIMPY-ROOT\"\n"
     )
 
     @patch("shimpy.image.run_output")
     def test_finds_correct_partition(self, mock_run_output):
-        mock_run_output.return_value = self.PARTED_OUTPUT
+        mock_run_output.return_value = self.CGPT_OUTPUT
         num = _find_partition_num(Path("fake.bin"), "SHIMPY-ROOT")
         self.assertEqual(num, 3)
 
     @patch("shimpy.image.run_output")
     def test_raises_for_missing_partition(self, mock_run_output):
-        mock_run_output.return_value = self.PARTED_OUTPUT
+        mock_run_output.return_value = self.CGPT_OUTPUT
         from shimpy.util import BuildError
         with self.assertRaises(BuildError):
             _find_partition_num(Path("fake.bin"), "KERN-A")
